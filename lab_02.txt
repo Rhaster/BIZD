@@ -1,0 +1,92 @@
+-- Zad1
+SELECT last_name, salary
+FROM DEPTULAP.employees
+WHERE department_id BETWEEN 20 AND 50
+  AND salary BETWEEN 2000 AND 7000
+ORDER BY last_name;
+
+-- Zad2
+SELECT hire_date, last_name, salary
+FROM DEPTULAP.employees
+WHERE manager_id IN (
+    SELECT employee_id
+    FROM DEPTULAP.employees
+    WHERE EXTRACT(YEAR FROM hire_date) = 2005
+)
+ORDER BY salary;
+
+-- Zad3
+SELECT first_name || ' ' || last_name, salary, phone_number
+FROM DEPTULAP.employees
+WHERE SUBSTR(last_name, 3, 1) = 'e'
+  AND first_name LIKE '%' || :imię_część || '%'
+ORDER BY first_name || ' ' || last_name DESC, salary ASC;
+
+-- Zad4
+SELECT first_name || ' ' || last_name,
+       ROUND(MONTHS_BETWEEN(SYSDATE, hire_date)) AS liczba_miesiecy,
+       CASE
+           WHEN MONTHS_BETWEEN(SYSDATE, hire_date) <= 150 THEN salary * 0.10
+           WHEN MONTHS_BETWEEN(SYSDATE, hire_date) BETWEEN 150 AND 200 THEN salary * 0.20
+           WHEN MONTHS_BETWEEN(SYSDATE, hire_date) > 200 THEN salary * 0.30
+           ELSE 0
+       END
+FROM DEPTULAP.employees
+ORDER BY liczba_miesiecy;
+
+-- Zad5
+SELECT department_id,
+       SUM(salary),
+       ROUND(AVG(salary), 0)
+FROM DEPTULAP.employees
+WHERE salary > 5000
+GROUP BY department_id;
+
+-- Zad6
+SELECT e.last_name,
+       e.department_id,
+       d.department_name,
+       e.job_id
+FROM DEPTULAP.employees e
+JOIN DEPTULAP.departments d ON e.department_id = d.department_id
+JOIN DEPTULAP.locations l ON d.location_id = l.location_id
+WHERE l.city = 'Toronto';
+
+-- Zad7
+SELECT e.first_name || ' ' || e.last_name,
+       c.first_name || ' ' || c.last_name
+FROM DEPTULAP.employees e
+JOIN DEPTULAP.employees c ON e.department_id = c.department_id
+WHERE e.first_name = 'Jennifer' AND e.employee_id != c.employee_id;
+
+-- Zad8
+SELECT department_name
+FROM DEPTULAP.departments d
+LEFT JOIN DEPTULAP.employees e ON d.department_id = e.department_id
+WHERE e.employee_id IS NULL;
+
+
+-- Zad10
+SELECT e.first_name || ' ' || e.last_name,
+       e.job_id,
+       d.department_name,
+       e.salary,
+       j.grade
+FROM DEPTULAP.employees e
+JOIN DEPTULAP.departments d ON e.department_id = d.department_id
+JOIN DEPTULAP.job_grades j ON e.salary BETWEEN j.min_salary AND j.max_salary;
+
+-- Zad11
+SELECT first_name, last_name, salary
+FROM DEPTULAP.employees
+WHERE salary > (SELECT AVG(salary) FROM DEPTULAP.employees)
+ORDER BY salary DESC;
+
+-- Zad12
+SELECT e.employee_id, e.first_name, e.last_name
+FROM DEPTULAP.employees e
+WHERE e.department_id IN (
+    SELECT department_id
+    FROM DEPTULAP.employees
+    WHERE last_name LIKE '%u%'
+);
