@@ -1,0 +1,421 @@
+--Paweł Deptuła 155257
+--Zad1
+CREATE OR REPLACE FUNCTION get_job_title(p_job_id IN VARCHAR2) RETURN VARCHAR2 AS
+  v_job_title VARCHAR2(255);
+BEGIN
+  BEGIN
+    SELECT job_title INTO v_job_title
+    FROM deptulap.jobs
+    WHERE job_id = p_job_id;
+
+    RETURN v_job_title;
+  EXCEPTION
+    WHEN NO_DATA_FOUND THEN
+      RAISE_APPLICATION_ERROR(-20001, 'Nie znaleziono pracy o podanym ID');
+  END;
+END get_job_title;
+/
+
+--Zad2
+CREATE OR REPLACE FUNCTION get_annual_salary(p_employee_id IN NUMBER) RETURN NUMBER AS
+  v_annual_salary NUMBER;
+BEGIN
+  SELECT (salary * 12) + (NVL(commission_pct, 0) * salary * 12) INTO v_annual_salary
+  FROM deptulap.employees
+  WHERE employee_id = p_employee_id;
+
+  RETURN v_annual_salary;
+EXCEPTION
+  WHEN NO_DATA_FOUND THEN
+    RAISE_APPLICATION_ERROR(-20002, 'Nie znaleziono pracownika o podanym ID');
+END get_annual_salary;
+/
+
+--Zad3
+CREATE OR REPLACE FUNCTION get_area_code(p_phone_number VARCHAR2) RETURN VARCHAR2 IS
+    v_area_code VARCHAR2(10);
+BEGIN
+    v_area_code := SUBSTR(p_phone_number, 1, INSTR(p_phone_number, '-') - 1);
+    RETURN v_area_code;
+END;
+
+--Zad4
+CREATE OR REPLACE FUNCTION capitalize_first_last(p_string VARCHAR2) RETURN VARCHAR2 IS
+    v_result VARCHAR2(100);
+BEGIN
+    v_result := INITCAP(SUBSTR(p_string, 1, 1)) ||
+                LOWER(SUBSTR(p_string, 2, LENGTH(p_string) - 2)) ||
+                INITCAP(SUBSTR(p_string, -1, 1));
+    RETURN v_result;
+END;
+
+--Zad5
+CREATE OR REPLACE FUNCTION get_birthdate_from_pesel(p_pesel VARCHAR2) RETURN DATE IS
+    v_year VARCHAR2(4);
+    v_month VARCHAR2(2);
+    v_day VARCHAR2(2);
+BEGIN
+    v_year := CASE
+                 WHEN SUBSTR(p_pesel, 3, 1) IN ('0', '1') THEN '19' || SUBSTR(p_pesel, 1, 2)
+                 WHEN SUBSTR(p_pesel, 3, 1) IN ('2', '3') THEN '20' || SUBSTR(p_pesel, 1, 2)
+                 ELSE '21' || SUBSTR(p_pesel, 1, 2)
+              END;
+
+    v_month := TO_CHAR(TO_NUMBER(SUBSTR(p_pesel, 3, 2)) MOD 20, 'FM00');
+    v_day := SUBSTR(p_pesel, 5, 2);
+
+    RETURN TO_DATE(v_year || '-' || v_month || '-' || v_day, 'YYYY-MM-DD');
+END;
+
+--Zad6
+CREATE OR REPLACE FUNCTION get_employee_department_count(p_country_name VARCHAR2) RETURN VARCHAR2 IS
+    v_country_id CHAR(2);
+    v_employee_count NUMBER;
+    v_department_count NUMBER;
+    country_not_found EXCEPTION;
+BEGIN
+    -- Znajdź ID kraju
+    SELECT country_id INTO v_country_id
+    FROM deptulap.countries
+    WHERE UPPER(country_name) = UPPER(p_country_name);
+
+    -- Oblicz liczbę pracowników
+    SELECT COUNT(*) INTO v_employee_count
+    FROM deptulap.employees e
+    JOIN deptulap.departments d ON e.department_id = d.department_id
+    JOIN deptulap.locations l ON d.location_id = l.location_id
+    WHERE l.country_id = v_country_id;
+
+    -- Oblicz liczbę departamentów
+    SELECT COUNT(DISTINCT d.department_id) INTO v_department_count
+    FROM deptulap.departments d
+    JOIN deptulap.locations l ON d.location_id = l.location_id
+    WHERE l.country_id = v_country_id;
+
+    RETURN 'Liczba pracowników: ' || v_employee_count || ', Liczba departamentów: ' || v_department_count;
+EXCEPTION
+    WHEN NO_DATA_FOUND THEN
+        RAISE country_not_found;
+END;
+
+--WYZWALACZE
+--Zad1
+--tabela archiwalna
+CREATE TABLE archiwum_departamentow (
+    id NUMBER,
+    nazwa VARCHAR2(30),
+    data_zamkniecia DATE,
+    ostatni_manager VARCHAR2(50)
+);
+
+CREATE OR REPLACE TRIGGER trg_archive_department
+AFTER DELETE ON deptulap.departments
+FOR EACH ROW
+BEGIN
+    INSERT INTO archiwum_departamentow (id, nazwa, data_zamkniecia, ostatni_manager)
+    VALUES (:OLD.department_id, :OLD.department_name, SYSDATE, 
+            (SELECT first_name || ' ' || last_name 
+             FROM deptulap.employees 
+             WHERE employee_id = :OLD.manager_id));
+END;
+
+--Zad2
+CREATE TABLE zlodziej (
+    id NUMBER PRIMARY KEY,
+    user_name VARCHAR2(50),
+    czas_zmiany DATE,
+    salary NUMBER(8, 2)
+);
+
+--sekwencja
+CREATE SEQUENCE zlodziej_seq
+START WITH 1
+INCREMENT BY 1;
+
+CREATE OR REPLACE TRIGGER trg_check_salary
+BEFORE INSERT OR UPDATE ON deptulap.employees
+FOR EACH ROW
+BEGIN
+    IF :NEW.salary < 2000 OR :NEW.salary > 26000 THEN
+        INSERT INTO zlodziej (id, user_name, czas_zmiany, salary)
+        VALUES (zlodziej_seq.NEXTVAL, USER, SYSDATE, :NEW.salary);
+        RAISE_APPLICATION_ERROR(-20001, 'Zarobki muszą być w przedziale 2000 - 26000.');
+    END IF;
+END;
+
+--Zad3
+CREATE OR REPLACE TRIGGER trg_auto_increment_employee_id
+BEFORE INSERT ON deptulap.employees
+FOR EACH ROW
+BEGIN
+    IF :NEW.employee_id IS NULL THEN
+        :NEW.employee_id := employees_seq.NEXTVAL;
+    END IF;
+END;
+
+--Zad4
+CREATE OR REPLACE TRIGGER trg_no_dml_on_job_grades
+BEFORE INSERT OR UPDATE OR DELETE ON deptulap.job_grades
+BEGIN
+    RAISE_APPLICATION_ERROR(-20002, 'Operacje DML są zabronione na tabeli JOB_GRADES.');
+END;
+
+--Zad5
+CREATE OR REPLACE TRIGGER trg_protect_salary_change
+BEFORE UPDATE OF min_salary, max_salary ON deptulap.jobs_copy
+FOR EACH ROW
+BEGIN
+    IF :OLD.min_salary != :NEW.min_salary OR :OLD.max_salary != :NEW.max_salary THEN
+        RAISE_APPLICATION_ERROR(-20003, 'Zmiana min_salary i max_salary jest zabroniona.');
+    END IF;
+END;
+
+--PACZKI
+--Zad1
+--specyfikacja paczki
+CREATE OR REPLACE PACKAGE MyProceduresAndFunctions AS
+    -- Definicje funkcji i procedur
+    FUNCTION get_job_title(p_job_id VARCHAR2) RETURN VARCHAR2;
+    FUNCTION get_annual_salary(p_employee_id NUMBER) RETURN NUMBER;
+    FUNCTION get_area_code(p_phone_number VARCHAR2) RETURN VARCHAR2;
+    FUNCTION capitalize_first_last(p_string VARCHAR2) RETURN VARCHAR2;
+    FUNCTION get_birthdate_from_pesel(p_pesel VARCHAR2) RETURN DATE;
+    FUNCTION get_employee_department_count(p_country_name VARCHAR2) RETURN VARCHAR2;
+    
+    PROCEDURE add_job(p_job_id VARCHAR2, p_job_title VARCHAR2);
+    PROCEDURE update_job_title(p_job_id VARCHAR2, p_new_job_title VARCHAR2);
+    PROCEDURE delete_job(p_job_id VARCHAR2);
+    PROCEDURE get_employee_salary_name(p_employee_id NUMBER, p_salary OUT NUMBER, p_last_name OUT VARCHAR2);
+    PROCEDURE add_employee(
+        p_first_name VARCHAR2,
+        p_last_name VARCHAR2,
+        p_email VARCHAR2,
+        p_hire_date DATE,
+        p_job_id VARCHAR2,
+        p_salary NUMBER
+    );
+END MyProceduresAndFunctions;
+
+--implementacja paczki
+CREATE OR REPLACE PACKAGE BODY MyProceduresAndFunctions AS
+    FUNCTION get_job_title(p_job_id VARCHAR2) RETURN VARCHAR2 IS
+        v_job_title VARCHAR2(35);
+    BEGIN
+        SELECT job_title INTO v_job_title
+        FROM deptulap.jobs_copy
+        WHERE job_id = p_job_id;
+        RETURN v_job_title;
+    EXCEPTION
+        WHEN NO_DATA_FOUND THEN
+            RETURN NULL;
+    END get_job_title;
+
+    FUNCTION get_annual_salary(p_employee_id NUMBER) RETURN NUMBER IS
+        v_salary NUMBER(8,2);
+        v_commission_pct NUMBER(2,2);
+        v_annual_salary NUMBER(10,2);
+    BEGIN
+        SELECT salary, NVL(commission_pct, 0) INTO v_salary, v_commission_pct
+        FROM deptulap.employees
+        WHERE employee_id = p_employee_id;
+
+        v_annual_salary := (v_salary * 12) + (v_salary * v_commission_pct);
+        RETURN v_annual_salary;
+    END get_annual_salary;
+
+    FUNCTION get_area_code(p_phone_number VARCHAR2) RETURN VARCHAR2 IS
+        v_area_code VARCHAR2(10);
+    BEGIN
+        v_area_code := SUBSTR(p_phone_number, 1, INSTR(p_phone_number, '-') - 1);
+        RETURN v_area_code;
+    END get_area_code;
+
+    FUNCTION capitalize_first_last(p_string VARCHAR2) RETURN VARCHAR2 IS
+        v_result VARCHAR2(100);
+    BEGIN
+        v_result := INITCAP(SUBSTR(p_string, 1, 1)) ||
+                    LOWER(SUBSTR(p_string, 2, LENGTH(p_string) - 2)) ||
+                    INITCAP(SUBSTR(p_string, -1, 1));
+        RETURN v_result;
+    END capitalize_first_last;
+
+    FUNCTION get_birthdate_from_pesel(p_pesel VARCHAR2) RETURN DATE IS
+        v_year VARCHAR2(4);
+        v_month VARCHAR2(2);
+        v_day VARCHAR2(2);
+    BEGIN
+        v_year := CASE
+                     WHEN SUBSTR(p_pesel, 3, 1) IN ('0', '1') THEN '19' || SUBSTR(p_pesel, 1, 2)
+                     WHEN SUBSTR(p_pesel, 3, 1) IN ('2', '3') THEN '20' || SUBSTR(p_pesel, 1, 2)
+                     ELSE '21' || SUBSTR(p_pesel, 1, 2)
+                  END;
+
+        v_month := TO_CHAR(TO_NUMBER(SUBSTR(p_pesel, 3, 2)) MOD 20, 'FM00');
+        v_day := SUBSTR(p_pesel, 5, 2);
+
+        RETURN TO_DATE(v_year || '-' || v_month || '-' || v_day, 'YYYY-MM-DD');
+    END get_birthdate_from_pesel;
+
+    FUNCTION get_employee_department_count(p_country_name VARCHAR2) RETURN VARCHAR2 IS
+        v_country_id CHAR(2);
+        v_employee_count NUMBER;
+        v_department_count NUMBER;
+    BEGIN
+        SELECT country_id INTO v_country_id
+        FROM deptulap.countries
+        WHERE UPPER(country_name) = UPPER(p_country_name);
+
+        SELECT COUNT(*) INTO v_employee_count
+        FROM deptulap.employees e
+        JOIN deptulap.departments d ON e.department_id = d.department_id
+        JOIN deptulap.locations l ON d.location_id = l.location_id
+        WHERE l.country_id = v_country_id;
+
+        SELECT COUNT(DISTINCT d.department_id) INTO v_department_count
+        FROM deptulap.departments d
+        JOIN deptulap.locations l ON d.location_id = l.location_id
+        WHERE l.country_id = v_country_id;
+
+        RETURN 'Liczba pracowników: ' || v_employee_count || ', Liczba departamentów: ' || v_department_count;
+    EXCEPTION
+        WHEN NO_DATA_FOUND THEN
+            RETURN 'Kraj nie istnieje';
+    END get_employee_department_count;
+
+    PROCEDURE add_job(p_job_id VARCHAR2, p_job_title VARCHAR2) IS
+    BEGIN
+        INSERT INTO deptulap.jobs_copy (job_id, job_title)
+        VALUES (p_job_id, p_job_title);
+        COMMIT;
+    EXCEPTION
+        WHEN OTHERS THEN
+            DBMS_OUTPUT.PUT_LINE('Wystąpił błąd podczas dodawania pracy: ' || SQLERRM);
+    END add_job;
+
+    PROCEDURE update_job_title(p_job_id VARCHAR2, p_new_job_title VARCHAR2) IS
+    BEGIN
+        UPDATE deptulap.jobs_copy
+        SET job_title = p_new_job_title
+        WHERE job_id = p_job_id;
+
+        IF SQL%ROWCOUNT = 0 THEN
+            RAISE NO_DATA_FOUND;
+        END IF;
+
+        COMMIT;
+    EXCEPTION
+        WHEN NO_DATA_FOUND THEN
+            DBMS_OUTPUT.PUT_LINE('Błąd: Brak rekordów do aktualizacji.');
+        WHEN OTHERS THEN
+            DBMS_OUTPUT.PUT_LINE('Wystąpił inny błąd: ' || SQLERRM);
+    END update_job_title;
+
+    PROCEDURE delete_job(p_job_id VARCHAR2) IS
+    BEGIN
+        DELETE FROM deptulap.jobs_copy
+        WHERE job_id = p_job_id;
+
+        IF SQL%ROWCOUNT = 0 THEN
+            RAISE NO_DATA_FOUND;
+        END IF;
+
+        COMMIT;
+    EXCEPTION
+        WHEN NO_DATA_FOUND THEN
+            DBMS_OUTPUT.PUT_LINE('Błąd: Brak rekordów do usunięcia.');
+        WHEN OTHERS THEN
+            DBMS_OUTPUT.PUT_LINE('Wystąpił inny błąd: ' || SQLERRM);
+    END delete_job;
+
+    PROCEDURE get_employee_salary_name(p_employee_id NUMBER, p_salary OUT NUMBER, p_last_name OUT VARCHAR2) IS
+    BEGIN
+        SELECT salary, last_name
+        INTO p_salary, p_last_name
+        FROM deptulap.employees
+        WHERE employee_id = p_employee_id;
+    EXCEPTION
+        WHEN NO_DATA_FOUND THEN
+            DBMS_OUTPUT.PUT_LINE('Pracownik o podanym ID nie istnieje.');
+    END get_employee_salary_name;
+
+    PROCEDURE add_employee(
+        p_first_name VARCHAR2,
+        p_last_name VARCHAR2,
+        p_email VARCHAR2,
+        p_hire_date DATE,
+        p_job_id VARCHAR2,
+        p_salary NUMBER
+    ) IS
+    BEGIN
+        IF p_salary > 20000 THEN
+            RAISE_APPLICATION_ERROR(-20001, 'Wynagrodzenie przekracza 20000.');
+        END IF;
+
+        INSERT INTO deptulap.employees (employee_id, first_name, last_name, email, hire_date, job_id, salary)
+        VALUES (employees_seq.NEXTVAL, p_first_name, p_last_name, p_email, p_hire_date, p_job_id, p_salary);
+        COMMIT;
+    EXCEPTION
+        WHEN OTHERS THEN
+            DBMS_OUTPUT.PUT_LINE('Wystąpił błąd: ' || SQLERRM);
+    END add_employee;
+
+END MyProceduresAndFunctions;
+
+--Zad2
+--specyfikacja paczki
+CREATE OR REPLACE PACKAGE RegionsPackage AS
+    -- Funkcje do odczytu danych
+    FUNCTION get_region_by_id(p_region_id NUMBER) RETURN VARCHAR2;
+    FUNCTION get_all_regions RETURN SYS_REFCURSOR;
+
+    -- Procedury do modyfikacji danych
+    PROCEDURE add_region(p_region_id NUMBER, p_region_name VARCHAR2);
+    PROCEDURE update_region(p_region_id NUMBER, p_region_name VARCHAR2);
+    PROCEDURE delete_region(p_region_id NUMBER);
+END RegionsPackage;
+
+--implementacja paczki
+CREATE OR REPLACE PACKAGE BODY RegionsPackage AS
+
+    FUNCTION get_region_by_id(p_region_id NUMBER) RETURN VARCHAR2 IS
+        v_region_name VARCHAR2(25);
+    BEGIN
+        SELECT region_name INTO v_region_name
+        FROM deptulap.regions_copy
+        WHERE region_id = p_region_id;
+        RETURN v_region_name;
+    EXCEPTION
+        WHEN NO_DATA_FOUND THEN
+            RETURN NULL;
+    END get_region_by_id;
+
+    FUNCTION get_all_regions RETURN SYS_REFCURSOR IS
+        v_regions SYS_REFCURSOR;
+    BEGIN
+        OPEN v_regions FOR SELECT * FROM deptulap.regions_copy;
+        RETURN v_regions;
+    END get_all_regions;
+
+    PROCEDURE add_region(p_region_id NUMBER, p_region_name VARCHAR2) IS
+    BEGIN
+        INSERT INTO deptulap.regions_copy (region_id, region_name)
+        VALUES (p_region_id, p_region_name);
+        COMMIT;
+    END add_region;
+
+    PROCEDURE update_region(p_region_id NUMBER, p_region_name VARCHAR2) IS
+    BEGIN
+        UPDATE deptulap.regions_copy
+        SET region_name = p_region_name
+        WHERE region_id = p_region_id;
+        COMMIT;
+    END update_region;
+
+    PROCEDURE delete_region(p_region_id NUMBER) IS
+    BEGIN
+        DELETE FROM deptulap.regions_copy
+        WHERE region_id = p_region_id;
+        COMMIT;
+    END delete_region;
+
+END RegionsPackage;
