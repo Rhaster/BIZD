@@ -1,2 +1,2 @@
 # BIZD
-155257
+Cwiczenia i projekt z Oracle 
